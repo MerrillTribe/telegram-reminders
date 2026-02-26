@@ -1,0 +1,17 @@
+name: Telegram Reminder
+
+on:
+  schedule:
+    # Runs every day at 2:00 PM UTC
+    - cron: "0 14 * * *"
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send Telegram Message
+        run: |
+          curl -s -X POST https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/sendMessage \
+          -d chat_id=${{ secrets.CHAT_ID }} \
+          -d text="Good morning! This is your automated message."
