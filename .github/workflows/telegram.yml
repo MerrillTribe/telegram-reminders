@@ -1,8 +1,9 @@
 name: Telegram Reminder
 
 on:
+  workflow_dispatch:
   schedule:
-    # Runs every day at 2:00 PM UTC
+    # Runs every day at 6:00 PM UTC
     - cron: "0 14 * * *"
 
 jobs:
