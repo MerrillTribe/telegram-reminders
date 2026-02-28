@@ -3,16 +3,15 @@ name: Telegram Reminder
 on:
   workflow_dispatch:
   schedule:
-    # Runs every day at 6:00 PM UTC
-    - cron: "0 14 * * *"
+    # Runs every Wednesday at 6:30 PM Utah time (00:30 UTC Thursday)
+    - cron: "30 0 * * 4"
 
 jobs:
   send:
     runs-on: ubuntu-latest
-
     steps:
       - name: Send Telegram Message
         run: |
-          curl -s -X POST https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/sendMessage \
-          -d chat_id=${{ secrets.CHAT_ID }} \
-          -d text="Good morning! This is your automated message."
+          curl -sS -X POST "https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/sendMessage" \
+            -d "chat_id=${{ secrets.CHAT_ID }}" \
+            --data-urlencode $'text=📅 Reminder:\nThe PACT Weekly Training Net will be held tonight at 2030hrs (8:30 PM).\n\nFrequency:\n439.800 (Simplex)\n\nWe look forward to hearing you on the air.'
