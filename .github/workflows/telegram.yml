@@ -3,16 +3,79 @@ name: Telegram Reminder
 on:
   workflow_dispatch:
   schedule:
-    # Runs every Wednesday at 6:30 PM Utah time (00:30 UTC Thursday)
-    - cron: "30 0 * * 4"
+    # Run frequently so we can gate on America/Denver local time (handles DST automatically).
+    # These windows cover Wednesday ~6:30 PM Denver time reliably year-round.
+    - cron: "*/5 23 * * 3"   # Wed 23:00–23:59 UTC
+    - cron: "*/5 0-2 * * 4"  # Thu 00:00–02:59 UTC
 
 jobs:
   send:
     runs-on: ubuntu-latest
     steps:
-      - name: Send Telegram Message
+      - name: Compute Denver time + decide whether to send
+        id: gate
+        shell: bash
         run: |
-          curl -sS -X POST "https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/sendMessage" \
+          set -euo pipefail
+
+          # Current time in Denver (Utah)
+          DENVER_DATE="$(TZ=America/Denver date +'%Y-%m-%d')"
+          DENVER_DOW="$(TZ=America/Denver date +'%u')"   # 1=Mon ... 3=Wed ... 7=Sun
+          DENVER_HM="$(TZ=America/Denver date +'%H%M')"   # e.g., 1830
+
+          echo "UTC now:    $(date -u +'%Y-%m-%d %H:%M:%S')"
+          echo "Denver now: $(TZ=America/Denver date +'%Y-%m-%d %H:%M:%S %Z')"
+          echo "Denver date: $DENVER_DATE"
+          echo "Denver DOW:  $DENVER_DOW"
+          echo "Denver HM:   $DENVER_HM"
+
+          # Only send on Wednesdays between 18:30 and 18:39 Denver time.
+          # The tolerance window prevents minor scheduling drift from missing the send.
+          SHOULD_SEND=false
+          if [[ "$DENVER_DOW" == "3" ]] && [[ "$DENVER_HM" -ge "1830" ]] && [[ "$DENVER_HM" -le "1839" ]]; then
+            SHOULD_SEND=true
+          fi
+
+          echo "should_send=$SHOULD_SEND" >> "$GITHUB_OUTPUT"
+          echo "denver_date=$DENVER_DATE" >> "$GITHUB_OUTPUT"
+
+      # Restore a marker file so we only send once per Denver date
+      - name: Restore send marker
+        if: steps.gate.outputs.should_send == 'true'
+        uses: actions/cache@v4
+        with:
+          path: .pact-send-marker
+          key: pact-telegram-reminder-${{ steps.gate.outputs.denver_date }}
+
+      - name: Send Telegram Message (once)
+        if: steps.gate.outputs.should_send == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # If marker exists, we've already sent for this Denver date.
+          if [[ -f .pact-send-marker/sent.txt ]]; then
+            echo "Already sent for Denver date ${{ steps.gate.outputs.denver_date }}. Exiting."
+            exit 0
+          fi
+
+          mkdir -p .pact-send-marker
+
+          echo "Before Telegram (UTC): $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          curl -sS --fail-with-body -w "\nHTTP:%{http_code}\n" \
+            -X POST "https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/sendMessage" \
             -d "chat_id=${{ secrets.CHAT_ID }}" \
             -d "parse_mode=HTML" \
-            --data-urlencode $'text=<b>📅 PACT Weekly Training Net Reminder</b>\n\nThe net will be held tonight at <b>2030hrs (8:30 PM)</b>.\n\nFrequency:\n<i>439.800 (Simplex)</i>\n\nWe look forward to hearing you on the air.'
+            --data-urlencode $'text=<b>📅 PACT Weekly Training Net Reminder</b>\n\nThe net will be held tonight at <b>2030hrs (8:30 PM)</b>.\n\nFrequency:\n<i>439.800 (Simplex)</i>\n\nWe look forward to hearing you on the air.' | tee telegram_response.json
+          echo "After Telegram (UTC):  $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+          # Write marker so subsequent runs don't resend
+          echo "sent at $(TZ=America/Denver date +'%Y-%m-%d %H:%M:%S %Z')" > .pact-send-marker/sent.txt
+
+      # Save marker into cache for the day (so later runs see it)
+      - name: Save send marker
+        if: steps.gate.outputs.should_send == 'true'
+        uses: actions/cache@v4
+        with:
+          path: .pact-send-marker
+          key: pact-telegram-reminder-${{ steps.gate.outputs.denver_date }}
