@@ -3,7 +3,14 @@ name: Telegram Reminder
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/5 * * * *"
+    # Wednesday evening in Denver = Thursday UTC during DST, and late Wednesday/early Thursday UTC across the year.
+    # Use several attempts, offset away from the top of the hour, to reduce scheduler-delay risk.
+    - cron: "37 0 * * 4"
+    - cron: "47 0 * * 4"
+    - cron: "57 0 * * 4"
+    - cron: "7 1 * * 4"
+    - cron: "17 1 * * 4"
+    - cron: "27 1 * * 4"
 
 concurrency:
   group: telegram-reminder
@@ -20,8 +27,8 @@ jobs:
           set -euo pipefail
 
           DENVER_DATE="$(TZ=America/Denver date +'%Y-%m-%d')"
-          DENVER_DOW="$(TZ=America/Denver date +'%u')"   # 1=Mon ... 3=Wed ... 7=Sun
-          DENVER_HM="$(TZ=America/Denver date +'%H%M')"  # e.g. 1830
+          DENVER_DOW="$(TZ=America/Denver date +'%u')"
+          DENVER_HM="$(TZ=America/Denver date +'%H%M')"
 
           echo "UTC now:    $(date -u +'%Y-%m-%d %H:%M:%S')"
           echo "Denver now: $(TZ=America/Denver date +'%Y-%m-%d %H:%M:%S %Z')"
@@ -29,7 +36,6 @@ jobs:
           echo "Denver DOW:  $DENVER_DOW"
           echo "Denver HM:   $DENVER_HM"
 
-          # Only send on Wednesdays between 18:30 and 19:30 Denver time.
           SHOULD_SEND=false
           if [[ "$DENVER_DOW" == "3" ]] && [[ "$DENVER_HM" -ge "1830" ]] && [[ "$DENVER_HM" -le "1930" ]]; then
             SHOULD_SEND=true
