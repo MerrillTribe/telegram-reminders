@@ -29,9 +29,9 @@ jobs:
           echo "Denver DOW:  $DENVER_DOW"
           echo "Denver HM:   $DENVER_HM"
 
-          # Only send on Wednesdays between 18:30 and 18:59 Denver time.
+          # Only send on Wednesdays between 18:30 and 19:30 Denver time.
           SHOULD_SEND=false
-          if [[ "$DENVER_DOW" == "3" ]] && [[ "$DENVER_HM" -ge "1830" ]] && [[ "$DENVER_HM" -le "1859" ]]; then
+          if [[ "$DENVER_DOW" == "3" ]] && [[ "$DENVER_HM" -ge "1830" ]] && [[ "$DENVER_HM" -le "1930" ]]; then
             SHOULD_SEND=true
           fi
 
