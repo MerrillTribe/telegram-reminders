@@ -3,12 +3,8 @@ name: Telegram Reminder
 on:
   workflow_dispatch:
   schedule:
-    # Run frequently so we can gate on America/Denver local time (handles DST automatically).
-    # These windows cover Wednesday ~6:30 PM Denver time reliably year-round.
-    - cron: "*/5 23 * * 3"   # Wed 23:00–23:59 UTC
-    - cron: "*/5 0-2 * * 4"  # Thu 00:00–02:59 UTC
+    - cron: "*/5 * * * *"
 
-# Prevent overlapping runs (avoids rare duplicate-send edge case)
 concurrency:
   group: telegram-reminder
   cancel-in-progress: false
@@ -23,10 +19,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Current time in Denver (Utah)
           DENVER_DATE="$(TZ=America/Denver date +'%Y-%m-%d')"
           DENVER_DOW="$(TZ=America/Denver date +'%u')"   # 1=Mon ... 3=Wed ... 7=Sun
-          DENVER_HM="$(TZ=America/Denver date +'%H%M')"   # e.g., 1830
+          DENVER_HM="$(TZ=America/Denver date +'%H%M')"  # e.g. 1830
 
           echo "UTC now:    $(date -u +'%Y-%m-%d %H:%M:%S')"
           echo "Denver now: $(TZ=America/Denver date +'%Y-%m-%d %H:%M:%S %Z')"
@@ -34,9 +29,9 @@ jobs:
           echo "Denver DOW:  $DENVER_DOW"
           echo "Denver HM:   $DENVER_HM"
 
-          # Only send on Wednesdays between 18:30 and 18:39 Denver time.
+          # Only send on Wednesdays between 18:30 and 18:59 Denver time.
           SHOULD_SEND=false
-          if [[ "$DENVER_DOW" == "3" ]] && [[ "$DENVER_HM" -ge "1830" ]] && [[ "$DENVER_HM" -le "1839" ]]; then
+          if [[ "$DENVER_DOW" == "3" ]] && [[ "$DENVER_HM" -ge "1830" ]] && [[ "$DENVER_HM" -le "1859" ]]; then
             SHOULD_SEND=true
           fi
 
@@ -56,7 +51,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # If marker exists, we've already sent for this Denver date.
           if [[ -f .pact-send-marker/sent.txt ]]; then
             echo "Already sent for Denver date ${{ steps.gate.outputs.denver_date }}. Exiting."
             exit 0
@@ -72,7 +66,6 @@ jobs:
             --data-urlencode $'text=<b>📅 PACT Weekly Training Net Reminder</b>\n\nThe net will be held tonight at <b>2030hrs (8:30 PM)</b>.\n\nFrequency:\n<i>439.800 (Simplex)</i>\n\nWe look forward to hearing you on the air.' | tee telegram_response.json
           echo "After Telegram (UTC):  $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 
-          # Write marker so subsequent runs don't resend
           echo "sent at $(TZ=America/Denver date +'%Y-%m-%d %H:%M:%S %Z')" > .pact-send-marker/sent.txt
 
       - name: Save send marker
