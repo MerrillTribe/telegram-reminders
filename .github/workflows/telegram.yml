@@ -3,8 +3,8 @@ name: Telegram Reminder
 on:
   workflow_dispatch:
   schedule:
-    # Wednesday evening in Denver = Thursday UTC during DST, and late Wednesday/early Thursday UTC across the year.
-    # Use several attempts, offset away from the top of the hour, to reduce scheduler-delay risk.
+    # These are UTC times.
+    # During MDT, they correspond to Wed 6:37, 6:47, 6:57, 7:07, 7:17, 7:27 PM in Utah.
     - cron: "37 0 * * 4"
     - cron: "47 0 * * 4"
     - cron: "57 0 * * 4"
