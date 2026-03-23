@@ -3,14 +3,23 @@ name: Telegram Reminder
 on:
   workflow_dispatch:
   schedule:
-    # These are UTC times.
-    # During MDT, they correspond to Wed 6:37, 6:47, 6:57, 7:07, 7:17, 7:27 PM in Utah.
+    # MDT attempts (Utah daylight time):
+    # Wed 6:37, 6:47, 6:57, 7:07, 7:17, 7:27 PM = Thu 00:37, 00:47, 00:57, 01:07, 01:17, 01:27 UTC
     - cron: "37 0 * * 4"
     - cron: "47 0 * * 4"
     - cron: "57 0 * * 4"
     - cron: "7 1 * * 4"
     - cron: "17 1 * * 4"
     - cron: "27 1 * * 4"
+
+    # MST attempts (Utah standard time):
+    # Wed 6:37, 6:47, 6:57, 7:07, 7:17, 7:27 PM = Thu 01:37, 01:47, 01:57, 02:07, 02:17, 02:27 UTC
+    - cron: "37 1 * * 4"
+    - cron: "47 1 * * 4"
+    - cron: "57 1 * * 4"
+    - cron: "7 2 * * 4"
+    - cron: "17 2 * * 4"
+    - cron: "27 2 * * 4"
 
 concurrency:
   group: telegram-reminder
