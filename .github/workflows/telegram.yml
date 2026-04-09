@@ -3,8 +3,8 @@ name: Telegram Reminder
 on:
   workflow_dispatch:
   schedule:
-    # Wednesday in America/Denver
-    # Start earlier so GitHub delays still have buffer before 7:30 PM
+    # Wednesday evening in America/Denver
+    # Spread runs away from :00 because GitHub says scheduled jobs can be delayed
     - cron: "35 18 * * 3"
       timezone: "America/Denver"
     - cron: "50 18 * * 3"
@@ -16,6 +16,11 @@ on:
     - cron: "25 19 * * 3"
       timezone: "America/Denver"
 
+# Needed so the workflow can commit the "sent" marker file back to the repo
+permissions:
+  contents: write
+
+# Prevent overlapping runs of this workflow
 concurrency:
   group: telegram-reminder
   cancel-in-progress: false
@@ -25,68 +30,130 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Compute Denver time + decide whether to send
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sync with default branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEFAULT_BRANCH="${{ github.event.repository.default_branch }}"
+          git fetch origin "$DEFAULT_BRANCH"
+          git checkout "$DEFAULT_BRANCH"
+          git reset --hard "origin/$DEFAULT_BRANCH"
+
+      - name: Compute Denver time and weekly marker
         id: gate
         shell: bash
         run: |
           set -euo pipefail
 
-          DENVER_DATE="$(TZ=America/Denver date +'%Y-%m-%d')"
-          DENVER_DOW="$(TZ=America/Denver date +'%u')"
-          DENVER_HM="$(TZ=America/Denver date +'%H%M')"
+          DENVER_NOW="$(TZ=America/Denver date +'%Y-%m-%d %H:%M:%S %Z')"
+          DENVER_DOW="$(TZ=America/Denver date +'%u')"          # 3 = Wednesday
+          DENVER_HM="$(TZ=America/Denver date +'%H%M')"         # e.g. 1925
+          ISO_YEAR="$(TZ=America/Denver date +'%G')"            # ISO week-numbering year
+          ISO_WEEK="$(TZ=America/Denver date +'%V')"            # ISO week number
+          WEEK_KEY="${ISO_YEAR}-W${ISO_WEEK}"
+          MARKER_FILE=".github/telegram-reminder-state/${WEEK_KEY}.txt"
 
-          echo "UTC now:    $(date -u +'%Y-%m-%d %H:%M:%S')"
-          echo "Denver now: $(TZ=America/Denver date +'%Y-%m-%d %H:%M:%S %Z')"
-          echo "Denver date: $DENVER_DATE"
-          echo "Denver DOW:  $DENVER_DOW"
-          echo "Denver HM:   $DENVER_HM"
+          echo "UTC now:    $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+          echo "Denver now: ${DENVER_NOW}"
+          echo "Denver DOW: ${DENVER_DOW}"
+          echo "Denver HM:  ${DENVER_HM}"
+          echo "Week key:   ${WEEK_KEY}"
+          echo "Marker:     ${MARKER_FILE}"
 
           SHOULD_SEND=false
 
-          # Wednesday only, and NEVER after 7:30 PM Denver time
+          # Wednesday only, and never after 7:30 PM Denver time
           if [[ "$DENVER_DOW" == "3" ]] && [[ "$DENVER_HM" -ge "1830" ]] && [[ "$DENVER_HM" -le "1930" ]]; then
             SHOULD_SEND=true
           fi
 
-          echo "should_send=$SHOULD_SEND" >> "$GITHUB_OUTPUT"
-          echo "denver_date=$DENVER_DATE" >> "$GITHUB_OUTPUT"
+          echo "should_send=${SHOULD_SEND}" >> "$GITHUB_OUTPUT"
+          echo "week_key=${WEEK_KEY}" >> "$GITHUB_OUTPUT"
+          echo "marker_file=${MARKER_FILE}" >> "$GITHUB_OUTPUT"
 
-      - name: Restore send marker
-        if: steps.gate.outputs.should_send == 'true'
-        uses: actions/cache@v4
-        with:
-          path: .pact-send-marker
-          key: pact-telegram-reminder-${{ steps.gate.outputs.denver_date }}
+      - name: Skip if outside valid send window
+        if: steps.gate.outputs.should_send != 'true'
+        run: echo "Outside Wednesday 6:30 PM–7:30 PM Denver send window. Exiting."
 
-      - name: Send Telegram Message (once)
+      - name: Skip if already sent this week
         if: steps.gate.outputs.should_send == 'true'
+        id: markercheck
         shell: bash
         run: |
           set -euo pipefail
 
-          if [[ -f .pact-send-marker/sent.txt ]]; then
-            echo "Already sent for Denver date ${{ steps.gate.outputs.denver_date }}. Exiting."
-            exit 0
+          if [[ -f "${{ steps.gate.outputs.marker_file }}" ]]; then
+            echo "already_sent=true" >> "$GITHUB_OUTPUT"
+            echo "Reminder already sent for ${{ steps.gate.outputs.week_key }}."
+            cat "${{ steps.gate.outputs.marker_file }}"
+          else
+            echo "already_sent=false" >> "$GITHUB_OUTPUT"
+            echo "No marker file found for ${{ steps.gate.outputs.week_key }}."
           fi
 
-          mkdir -p .pact-send-marker
+      - name: Send Telegram message
+        if: steps.gate.outputs.should_send == 'true' && steps.markercheck.outputs.already_sent != 'true'
+        shell: bash
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: |
+          set -euo pipefail
 
+          echo "Sending Telegram message..."
           echo "Before Telegram (UTC): $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 
-          curl -sS --fail-with-body -w "\nHTTP:%{http_code}\n" \
-            -X POST "https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/sendMessage" \
-            -d "chat_id=${{ secrets.CHAT_ID }}" \
+          RESPONSE_FILE="$(mktemp)"
+
+          curl -sS --fail-with-body \
+            -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${CHAT_ID}" \
             -d "parse_mode=HTML" \
             --data-urlencode $'text=<b>📅 PACT Weekly Training Net Reminder</b>\n\nThe net will be held tonight at <b>2030hrs (8:30 PM)</b>.\n\nFrequency:\n<i>439.800 (Simplex)</i>\n\nWe look forward to hearing you on the air.' \
-            | tee telegram_response.json
+            | tee "$RESPONSE_FILE"
 
           echo "After Telegram (UTC):  $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 
-          echo "sent at $(TZ=America/Denver date +'%Y-%m-%d %H:%M:%S %Z')" > .pact-send-marker/sent.txt
+      - name: Write weekly marker file
+        if: steps.gate.outputs.should_send == 'true' && steps.markercheck.outputs.already_sent != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
 
-      - name: Save send marker
-        if: steps.gate.outputs.should_send == 'true'
-        uses: actions/cache@v4
-        with:
-          path: .pact-send-marker
-          key: pact-telegram-reminder-${{ steps.gate.outputs.denver_date }}
+          mkdir -p .github/telegram-reminder-state
+
+          cat > "${{ steps.gate.outputs.marker_file }}" <<EOF
+          sent_at_denver=$(TZ=America/Denver date +'%Y-%m-%d %H:%M:%S %Z')
+          sent_at_utc=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          workflow_run=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          week_key=${{ steps.gate.outputs.week_key }}
+          EOF
+
+          echo "Created marker file:"
+          cat "${{ steps.gate.outputs.marker_file }}"
+
+      - name: Commit and push marker
+        if: steps.gate.outputs.should_send == 'true' && steps.markercheck.outputs.already_sent != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DEFAULT_BRANCH="${{ github.event.repository.default_branch }}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add "${{ steps.gate.outputs.marker_file }}"
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Record Telegram reminder sent for ${{ steps.gate.outputs.week_key }}"
+          git push origin "HEAD:${DEFAULT_BRANCH}"
