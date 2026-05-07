@@ -3,24 +3,17 @@ name: Telegram Reminder
 on:
   workflow_dispatch:
   schedule:
-    # Wednesday evening in America/Denver
-    # Spread runs away from :00 because GitHub says scheduled jobs can be delayed
-    - cron: "35 18 * * 3"
-      timezone: "America/Denver"
-    - cron: "50 18 * * 3"
-      timezone: "America/Denver"
-    - cron: "5 19 * * 3"
-      timezone: "America/Denver"
-    - cron: "20 19 * * 3"
-      timezone: "America/Denver"
-    - cron: "25 19 * * 3"
-      timezone: "America/Denver"
+    # GitHub Actions cron runs in UTC.
+    # These equal Wednesday evening in America/Denver during daylight saving time.
+    - cron: "35 0 * * 4"
+    - cron: "50 0 * * 4"
+    - cron: "5 1 * * 4"
+    - cron: "20 1 * * 4"
+    - cron: "25 1 * * 4"
 
-# Needed so the workflow can commit the "sent" marker file back to the repo
 permissions:
   contents: write
 
-# Prevent overlapping runs of this workflow
 concurrency:
   group: telegram-reminder
   cancel-in-progress: false
@@ -51,10 +44,10 @@ jobs:
           set -euo pipefail
 
           DENVER_NOW="$(TZ=America/Denver date +'%Y-%m-%d %H:%M:%S %Z')"
-          DENVER_DOW="$(TZ=America/Denver date +'%u')"          # 3 = Wednesday
-          DENVER_HM="$(TZ=America/Denver date +'%H%M')"         # e.g. 1925
-          ISO_YEAR="$(TZ=America/Denver date +'%G')"            # ISO week-numbering year
-          ISO_WEEK="$(TZ=America/Denver date +'%V')"            # ISO week number
+          DENVER_DOW="$(TZ=America/Denver date +'%u')"
+          DENVER_HM="$(TZ=America/Denver date +'%H%M')"
+          ISO_YEAR="$(TZ=America/Denver date +'%G')"
+          ISO_WEEK="$(TZ=America/Denver date +'%V')"
           WEEK_KEY="${ISO_YEAR}-W${ISO_WEEK}"
           MARKER_FILE=".github/telegram-reminder-state/${WEEK_KEY}.txt"
 
@@ -67,7 +60,6 @@ jobs:
 
           SHOULD_SEND=false
 
-          # Wednesday only, and never after 7:30 PM Denver time
           if [[ "$DENVER_DOW" == "3" ]] && [[ "$DENVER_HM" -ge "1830" ]] && [[ "$DENVER_HM" -le "1930" ]]; then
             SHOULD_SEND=true
           fi
@@ -96,6 +88,27 @@ jobs:
             echo "No marker file found for ${{ steps.gate.outputs.week_key }}."
           fi
 
+      - name: Debug secrets
+        if: steps.gate.outputs.should_send == 'true' && steps.markercheck.outputs.already_sent != 'true'
+        shell: bash
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: |
+          set -euo pipefail
+          echo "BOT_TOKEN length: ${#BOT_TOKEN}"
+          echo "CHAT_ID length: ${#CHAT_ID}"
+
+          if [[ -z "$BOT_TOKEN" ]]; then
+            echo "BOT_TOKEN secret is missing."
+            exit 1
+          fi
+
+          if [[ -z "$CHAT_ID" ]]; then
+            echo "CHAT_ID secret is missing."
+            exit 1
+          fi
+
       - name: Send Telegram message
         if: steps.gate.outputs.should_send == 'true' && steps.markercheck.outputs.already_sent != 'true'
         shell: bash
@@ -106,7 +119,7 @@ jobs:
           set -euo pipefail
 
           echo "Sending Telegram message..."
-          echo "Before Telegram (UTC): $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          echo "Before Telegram UTC: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 
           RESPONSE_FILE="$(mktemp)"
 
@@ -117,7 +130,12 @@ jobs:
             --data-urlencode $'text=<b>📅 PACT Weekly Training Net Reminder</b>\n\nThe net will be held tonight at <b>2030hrs (8:30 PM)</b>.\n\nFrequency:\n<i>439.800 (Simplex)</i>\n\nWe look forward to hearing you on the air.' \
             | tee "$RESPONSE_FILE"
 
-          echo "After Telegram (UTC):  $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          echo "After Telegram UTC: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+          echo "Telegram response:"
+          cat "$RESPONSE_FILE"
+
+          grep '"ok":true' "$RESPONSE_FILE"
 
       - name: Write weekly marker file
         if: steps.gate.outputs.should_send == 'true' && steps.markercheck.outputs.already_sent != 'true'
