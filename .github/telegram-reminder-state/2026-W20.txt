@@ -1,0 +1,4 @@
+sent_at_denver=2026-05-13 19:23:13 MDT
+sent_at_utc=2026-05-14T01:23:13Z
+workflow_run=https://github.com/MerrillTribe/telegram-reminders/actions/runs/25836071621
+week_key=2026-W20
